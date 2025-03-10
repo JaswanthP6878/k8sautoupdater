@@ -1,0 +1,9 @@
+FROM ubuntu:latest
+
+WORKDIR /app
+
+COPY target/release/k8sautoupdater /app/
+
+RUN chmod +x /app/k8sautoupdater    
+
+ENTRYPOINT ["/app/k8sautoupdater"]

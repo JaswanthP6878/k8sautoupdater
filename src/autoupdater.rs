@@ -22,7 +22,7 @@ impl Autoupdater {
         // get all pods first
         let client = Client::try_default().await.unwrap();
         let deployments: Api<Deployment> = Api::all(client);
-        let lp = ListParams::default().labels("reel=true");
+        let lp = ListParams::default().labels("reel");
         for deploy in deployments.list(&lp).await.unwrap().items{
             if let Some(name) = deploy.metadata.name {
                 info!("Found Deployment: {}", name);
