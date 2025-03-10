@@ -1,24 +1,29 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use k8s_openapi::serde_json::{self, json};
 use kube::{api::{ListParams, Patch, PatchParams}, Api, Client};
 use k8s_openapi::api::apps::v1::Deployment;
-// use serde_json::json;
 use log::{info, error};
-
 use tokio::sync::{Mutex, mpsc};
-
 use crate::DockerHubWebhook;
+
+#[derive(Eq, Hash, PartialEq)]
+struct DeploymentData {
+    deployment_name: String,  // Added deployment_name field
+    container_name: String,
+    tag: String,
+    namespace: String,
+}
 
 #[derive(Clone)]
 pub struct AutoUpdater {
-    deployments: Arc<Mutex<HashMap<String, (String, String)>>>, // Stores deployment deployment-names -> (container_name, image_name)
+    deployment_map: Arc<Mutex<HashMap<String, HashSet<DeploymentData>>>>,
 }
 
 impl AutoUpdater {
     pub fn new() -> Self {
         Self {
-            deployments: Arc::new(Mutex::new(HashMap::new())),
+            deployment_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -26,14 +31,13 @@ impl AutoUpdater {
     async fn init_updater(&mut self) {
         let client = Client::try_default().await.unwrap();
         let deployments: Api<Deployment> = Api::all(client);
-
         let lp = ListParams::default();
-        let mut map = self.deployments.lock().await;
+        let mut map = self.deployment_map.lock().await;
 
         for deploy in deployments.list(&lp).await.unwrap().items {
             if let Some(annotations) = &deploy.metadata.annotations {
                 if annotations.get("reel").map(|v| v == "true").unwrap_or(false) {
-                    if let Some(name) = deploy.metadata.name.clone() {
+                    if let (Some(deployment_name), Some(namespace)) = (deploy.metadata.name.clone(), deploy.metadata.namespace.clone()) {
                         let container_info = deploy
                             .spec
                             .as_ref()
@@ -45,10 +49,22 @@ impl AutoUpdater {
                             let current_image = container.image.clone().unwrap_or_default();
                             let image_repo: String = current_image.split(':').next().unwrap_or("").to_string();
 
-                            map.insert(name.clone(), (container_name.clone(), image_repo.clone()));
+                            // Create DeploymentData with deployment_name
+                            let deployment_data = DeploymentData {
+                                deployment_name: deployment_name.clone(),
+                                container_name: container_name.clone(),
+                                tag: image_repo.clone(),
+                                namespace: namespace.clone(),
+                            };
+
+                            // Insert into deploymentMap
+                            map.entry(image_repo.clone())
+                                .or_insert_with(HashSet::new)
+                                .insert(deployment_data);
+
                             info!(
-                                "Cached Deployment: {} | Container: {} | Image: {}",
-                                name, container_name, image_repo
+                                "Cached Deployment: {} | Namespace: {} | Container: {} | Image Repo: {}",
+                                deployment_name, namespace, container_name, image_repo
                             );
                         }
                     }
@@ -57,21 +73,26 @@ impl AutoUpdater {
         }
     }
 
-
     /// Updates the cached deployments with a new image when an event is triggered
-    pub async fn update_deployments(&self, recv_image: &str, full_image: &str) {
+    pub async fn update_deployments(&self, repo_name: &str, full_image: &str) {
         let client = Client::try_default().await.unwrap();
-        let deployments: Api<Deployment> = Api::all(client);
-        let map = self.deployments.lock().await;
-
-        for (name, (container_name, image)) in map.iter() {
-             if recv_image == image {
+        let mut map = self.deployment_map.lock().await;
+    
+        // Get deployments associated with this repo_name
+        if let Some(deployments) = map.get_mut(repo_name) {
+            for deployment_data in deployments.iter() {
+                let namespace = &deployment_data.namespace;
+                let deployment_name = &deployment_data.deployment_name;
+                let container_name = &deployment_data.container_name;
+    
+                let deployments_api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+    
                 let patch = json!({
                     "spec": {
                         "template": {
                             "spec": {
                                 "containers": [{
-                                    "name": container_name,  // Update container name dynamically if needed
+                                    "name": container_name,
                                     "image": full_image
                                 }]
                             }
@@ -79,14 +100,25 @@ impl AutoUpdater {
                     }
                 });
     
-                match deployments.patch(&name, &PatchParams::apply("my-updater"), &Patch::Merge(&patch)).await {
-                    Ok(_) => info!("Updated deployment {} with new image: {}", name, full_image),
-                    Err(e) => eprintln!("Failed to update deployment {}: {:?}", name, e),
+                info!(
+                    "Updating Deployment: {} | Namespace: {} | Container: {} | New Image: {}",
+                    deployment_name, namespace, container_name, full_image
+                );
+    
+                match deployments_api
+                    .patch(deployment_name, &PatchParams::apply("my-updater"), &Patch::Merge(&patch))
+                    .await
+                {
+                    Ok(_) => info!("Updated deployment {} in namespace {} with new image: {}", deployment_name, namespace, full_image),
+                    Err(e) => error!("Failed to update deployment {} in namespace {}: {:?}", deployment_name, namespace, e),
                 }
             }
+        } else {
+            info!("No deployments found for repo: {}", repo_name);
         }
     }
     
+    /// Main loop that listens for webhook events
     pub async fn init(&mut self, mut rx: mpsc::Receiver<DockerHubWebhook>) {
         self.init_updater().await;
         while let Some(webhook_data) = rx.recv().await {
