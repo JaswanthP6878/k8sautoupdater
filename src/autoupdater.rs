@@ -8,7 +8,7 @@ use log::{info, error};
 
 #[derive(Clone)]
 pub struct AutoUpdater {
-    deployments: Arc<Mutex<HashMap<String, String>>>, // Stores deployment names -> images
+    deployments: Arc<Mutex<HashMap<String, (String, String)>>>, // Stores deployment deployment-names -> (container_name, image_name)
 }
 
 impl AutoUpdater {
@@ -30,16 +30,23 @@ impl AutoUpdater {
             if let Some(annotations) = &deploy.metadata.annotations {
                 if annotations.get("reel").map(|v| v == "true").unwrap_or(false) {
                     if let Some(name) = deploy.metadata.name.clone() {
-                        let current_image = deploy
+                        let container_info = deploy
                             .spec
                             .as_ref()
-                            .and_then(|s: &k8s_openapi::api::apps::v1::DeploymentSpec| s.template.spec.as_ref())
-                            .and_then(|t| t.containers.first())
-                            .map(|c| c.image.clone().unwrap_or_default())
-                            .unwrap_or_default();
+                            .and_then(|s| s.template.spec.as_ref())
+                            .and_then(|t| t.containers.first());
 
-                        map.insert(name.clone(), current_image.clone());
-                        info!("Cached Deployment: {} with image: {}", name, current_image);
+                        if let Some(container) = container_info {
+                            let container_name = container.name.clone();
+                            let current_image = container.image.clone().unwrap_or_default();
+                            let image_repo: String = current_image.split(':').next().unwrap_or("").to_string();
+
+                            map.insert(name.clone(), (container_name.clone(), image_repo.clone()));
+                            info!(
+                                "Cached Deployment: {} | Container: {} | Image: {}",
+                                name, container_name, image_repo
+                            );
+                        }
                     }
                 }
             }
@@ -47,28 +54,30 @@ impl AutoUpdater {
     }
 
     /// Updates the cached deployments with a new image when an event is triggered
-    pub async fn update_deployments(&self, new_image: &str) {
+    pub async fn update_deployments(&self, recv_image: &str, full_image: &str) {
         let client = Client::try_default().await.unwrap();
         let deployments: Api<Deployment> = Api::all(client);
         let map = self.deployments.lock().unwrap();
 
-        for (name, _) in map.iter() {
-            let patch = json!({
-                "spec": {
-                    "template": {
-                        "spec": {
-                            "containers": [{
-                                "name": "sample-app",  // Update container name dynamically if needed
-                                "image": new_image
-                            }]
+        for (name, (container_name, image)) in map.iter() {
+             if recv_image == image {
+                let patch = json!({
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "containers": [{
+                                    "name": container_name,  // Update container name dynamically if needed
+                                    "image": full_image
+                                }]
+                            }
                         }
                     }
+                });
+    
+                match deployments.patch(&name, &PatchParams::apply("my-updater"), &Patch::Merge(&patch)).await {
+                    Ok(_) => info!("Updated deployment {} with new image: {}", name, full_image),
+                    Err(e) => eprintln!("Failed to update deployment {}: {:?}", name, e),
                 }
-            });
-
-            match deployments.patch(&name, &PatchParams::apply("my-updater"), &Patch::Merge(&patch)).await {
-                Ok(_) => info!("Updated deployment {} with new image: {}", name, new_image),
-                Err(e) => eprintln!("Failed to update deployment {}: {:?}", name, e),
             }
         }
     }

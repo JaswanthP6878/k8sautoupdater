@@ -1,8 +1,36 @@
 use autoupdater::AutoUpdater;
-use axum::{routing::get, Router};
+use axum::{routing::post, Json, Router};
+use serde::{Deserialize, Serialize};
 mod autoupdater;
-use log::{info, error};
+use log::info;
 use log4rs;
+
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DockerHubWebhook {
+    repository: Repository,
+    push_data: PushData,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Repository {
+    repo_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PushData {
+    tag: String,
+}
+
+/// Handle incoming webhook requests
+async fn handle_webhook(Json(payload): Json<DockerHubWebhook>) {
+    let repo_name = payload.repository.repo_name;
+    let tag = payload.push_data.tag;
+    
+    info!("Received webhook: Repository - {}, Tag - {}", repo_name, tag);
+
+    // Here you can trigger an update in your Kubernetes cluster
+}
 
 
 #[tokio::main]
@@ -17,8 +45,8 @@ async fn main() {
     autoupdater.init_updater().await;
 
     // running a router to simultaneosly have a web hook to docker hub so that we can recieve request;
-    let app = Router::new().route("/", get(|| async {"Hello World!"}));
+    let app = Router::new().route("/webhook", post(handle_webhook));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
     info!("started webHook server at port 3000");
+    axum::serve(listener, app).await.unwrap();
 }
