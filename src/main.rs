@@ -1,4 +1,4 @@
-use tokio::sync::mpsc::{self, Sender};
+use tokio::{sync::mpsc::{self, Sender}, task};
 
 use autoupdater::AutoUpdater;
 use axum::{routing::post, Json, Router};
@@ -39,7 +39,10 @@ async fn main() {
     info!("Starting Kubernetes Deployment scanner...");
     let mut autoupdater = AutoUpdater::new();
     let (tx, rx) = mpsc::channel::<DockerHubWebhook>(10);
-    autoupdater.init(rx).await;
+    // autoupdater.init(rx).await;
+    task::spawn(async move {
+        autoupdater.init(rx).await;
+    });
 
     // running a router to simultaneosly have a web hook to docker hub so that we can recieve request;
     let app = Router::new().route("/webhook", post(|json| handle_webhook(json, tx)));

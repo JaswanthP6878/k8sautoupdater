@@ -1,12 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use k8s_openapi::serde_json::{self, json};
 use kube::{api::{ListParams, Patch, PatchParams}, Api, Client};
 use k8s_openapi::api::apps::v1::Deployment;
 // use serde_json::json;
 use log::{info, error};
 
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::DockerHubWebhook;
 
@@ -28,7 +28,7 @@ impl AutoUpdater {
         let deployments: Api<Deployment> = Api::all(client);
 
         let lp = ListParams::default();
-        let mut map = self.deployments.lock().unwrap();
+        let mut map = self.deployments.lock().await;
 
         for deploy in deployments.list(&lp).await.unwrap().items {
             if let Some(annotations) = &deploy.metadata.annotations {
@@ -62,7 +62,7 @@ impl AutoUpdater {
     pub async fn update_deployments(&self, recv_image: &str, full_image: &str) {
         let client = Client::try_default().await.unwrap();
         let deployments: Api<Deployment> = Api::all(client);
-        let map = self.deployments.lock().unwrap();
+        let map = self.deployments.lock().await;
 
         for (name, (container_name, image)) in map.iter() {
              if recv_image == image {
