@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-autoupdater-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-autoupdater-deployment
+  template:
+    metadata:
+      labels:
+        app: k8s-autoupdater-deployment
+    spec:
+      serviceAccountName: rust-app-sa
+      containers:
+        - name:  k8s-autoupdater-deployment
+          image: assetsense/k8sautoupdater:v17  # Replace with your Docker Hub or private registry image
+          ports:
+            - containerPort: 3000
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+            requests:
+              cpu: "250m"
+              memory: "128Mi"
+          env:
+            - name: RUST_LOG
+              value: "info"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-autoupdater-svc
+spec:
+  selector:
+    app: k8s-autoupdater-deployment
+  ports:
+    - protocol: TCP
+      port: 3000       # Exposed service port
+      targetPort: 3000 # Container port
+  # type: ClusterIP  # Change to NodePort or LoadBalancer if needed
