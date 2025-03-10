@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use k8s_openapi::{api::{apps::v1::Deployment, core::v1::Pod}, List};
-use kube::{api::ListParams, Api, Client, ResourceExt};
+use k8s_openapi::api::apps::v1::Deployment;
+use kube::{api::ListParams, Api, Client};
 
 use log::info;
 
@@ -22,10 +22,15 @@ impl Autoupdater {
         // get all pods first
         let client = Client::try_default().await.unwrap();
         let deployments: Api<Deployment> = Api::all(client);
-        let lp = ListParams::default().labels("reel");
-        for deploy in deployments.list(&lp).await.unwrap().items{
-            if let Some(name) = deploy.metadata.name {
-                info!("Found Deployment: {}", name);
+
+        let lp = ListParams::default();
+        for deploy in deployments.list(&lp).await.unwrap().items {
+            if let Some(annotations) = &deploy.metadata.annotations {
+                if annotations.get("reel").map(|v: &String| v == "true").unwrap_or(false) {
+                    if let Some(name) = deploy.metadata.name {
+                        info!("Found Deployment with reel=true: {}", name);
+                    }
+                }
             }
         }
     }
