@@ -1,9 +1,6 @@
 FROM ubuntu:latest
-
 WORKDIR /app
-
+COPY log4rs.yaml /app/log4rs.yaml 
 COPY target/release/k8sautoupdater /app/
-
 RUN chmod +x /app/k8sautoupdater    
-
 ENTRYPOINT ["/app/k8sautoupdater"]
