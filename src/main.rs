@@ -1,4 +1,4 @@
-use autoupdater::Autoupdater;
+use autoupdater::AutoUpdater;
 use axum::{routing::get, Router};
 mod autoupdater;
 use log::{info, error};
@@ -11,7 +11,7 @@ async fn main() {
     // maybe we can init state where we first check the cluster for all the pods
     // and deployments that have the annotation.
     info!("Starting Kubernetes Deployment scanner...");
-    let mut  autoupdater = Autoupdater::new();
+    let mut autoupdater = AutoUpdater::new();
 
     // checks for whether a client is being able to be recognized;
     autoupdater.init_updater().await;
