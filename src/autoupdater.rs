@@ -6,6 +6,10 @@ use k8s_openapi::api::apps::v1::Deployment;
 // use serde_json::json;
 use log::{info, error};
 
+use tokio::sync::mpsc;
+
+use crate::DockerHubWebhook;
+
 #[derive(Clone)]
 pub struct AutoUpdater {
     deployments: Arc<Mutex<HashMap<String, (String, String)>>>, // Stores deployment deployment-names -> (container_name, image_name)
@@ -19,7 +23,7 @@ impl AutoUpdater {
     }
 
     /// Initializes and caches deployments with `reel=true` annotation
-    pub async fn init_updater(&mut self) {
+    async fn init_updater(&mut self) {
         let client = Client::try_default().await.unwrap();
         let deployments: Api<Deployment> = Api::all(client);
 
@@ -53,6 +57,7 @@ impl AutoUpdater {
         }
     }
 
+
     /// Updates the cached deployments with a new image when an event is triggered
     pub async fn update_deployments(&self, recv_image: &str, full_image: &str) {
         let client = Client::try_default().await.unwrap();
@@ -79,6 +84,20 @@ impl AutoUpdater {
                     Err(e) => eprintln!("Failed to update deployment {}: {:?}", name, e),
                 }
             }
+        }
+    }
+    
+    pub async fn init(&mut self, mut rx: mpsc::Receiver<DockerHubWebhook>) {
+        self.init_updater().await;
+        while let Some(webhook_data) = rx.recv().await {
+            let repo_name = webhook_data.repository.repo_name;
+            let tag = webhook_data.push_data.tag;
+            info!(
+                "Processing webhook: Repository - {}, Tag - {}",
+                repo_name, tag
+            );
+            let full_image = format!("{}:{}", repo_name, tag);
+            self.update_deployments(&repo_name, &full_image).await;
         }
     }
 }

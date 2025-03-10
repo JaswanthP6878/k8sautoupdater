@@ -1,3 +1,5 @@
+use tokio::sync::mpsc::{self, Sender};
+
 use autoupdater::AutoUpdater;
 use axum::{routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -23,29 +25,24 @@ struct PushData {
 }
 
 /// Handle incoming webhook requests
-async fn handle_webhook(Json(payload): Json<DockerHubWebhook>) {
-    let repo_name = payload.repository.repo_name;
-    let tag = payload.push_data.tag;
-    
-    info!("Received webhook: Repository - {}, Tag - {}", repo_name, tag);
-
-    // Here you can trigger an update in your Kubernetes cluster
+async fn handle_webhook(Json(payload): Json<DockerHubWebhook>, tx: Sender<DockerHubWebhook>) {
+    // let repo_name = payload.repository.repo_name;
+    // let tag = payload.push_data.tag;
+    // info!("Received webhook: Repository - {}, Tag - {}", repo_name, tag);
+    tx.send(payload).await.expect("cannot send value to payload");
 }
 
 
 #[tokio::main]
 async fn main() {
     log4rs::init_file("log4rs.yaml", Default::default()).expect("Failed to initialize logger");
-    // maybe we can init state where we first check the cluster for all the pods
-    // and deployments that have the annotation.
     info!("Starting Kubernetes Deployment scanner...");
     let mut autoupdater = AutoUpdater::new();
-
-    // checks for whether a client is being able to be recognized;
-    autoupdater.init_updater().await;
+    let (tx, rx) = mpsc::channel::<DockerHubWebhook>(10);
+    autoupdater.init(rx).await;
 
     // running a router to simultaneosly have a web hook to docker hub so that we can recieve request;
-    let app = Router::new().route("/webhook", post(handle_webhook));
+    let app = Router::new().route("/webhook", post(|json| handle_webhook(json, tx)));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     info!("started webHook server at port 3000");
     axum::serve(listener, app).await.unwrap();
