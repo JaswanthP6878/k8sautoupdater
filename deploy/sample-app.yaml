@@ -18,6 +18,6 @@ spec:
     spec:
       containers:
         - name: sample-app
-          image: assetsense/rustsample:v5
+          image: samplerepo/servicea:v1
           ports:
             - containerPort: 8080
