@@ -106,7 +106,7 @@ impl AutoUpdater {
                 );
     
                 match deployments_api
-                    .patch(deployment_name, &PatchParams::apply("my-updater"), &Patch::Merge(&patch))
+                    .patch(deployment_name, &PatchParams::apply("my-updater"), &Patch::Strategic(&patch))
                     .await
                 {
                     Ok(_) => info!("Updated deployment {} in namespace {} with new image: {}", deployment_name, namespace, full_image),
